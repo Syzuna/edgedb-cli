@@ -28,6 +28,7 @@ pub struct CloudInstance {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_ca: Option<String>,
+    org_slug: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -62,16 +63,17 @@ impl InstanceStatus {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct Org {
     pub id: String,
     pub name: String,
+    pub slug: String,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct CloudInstanceCreate {
     pub name: String,
-    pub org: String,
+    pub org_slug: String,
     // #[serde(skip_serializing_if = "Option::is_none")]
     // pub version: Option<String>,
     // #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,10 +83,11 @@ pub struct CloudInstanceCreate {
 }
 
 pub async fn find_cloud_instance_by_name(
+    org_slug: &str,
     name: &str,
     client: &CloudClient,
 ) -> anyhow::Result<Option<CloudInstance>> {
-    let instances: Vec<CloudInstance> = client.get("instances/").await?;
+    let instances: Vec<CloudInstance> = client.get(format!("orgs/{}/instances/", org_slug)).await?;
     if let Some(instance) = instances
         .into_iter()
         .find(|instance| instance.name.eq(&name))
@@ -117,7 +120,7 @@ async fn wait_instance_create(
         if instance.status == "creating" {
             task::sleep(INSTANCE_CREATION_POLLING_INTERVAL).await;
         }
-        instance = client.get(format!("instances/{}", instance.id)).await?;
+        instance = client.get(format!("orgs/{}/instances/{}", instance.org_slug, instance.id)).await?;
     }
     if instance.dsn != "" {
         Ok(instance)
@@ -146,7 +149,7 @@ pub async fn create_cloud_instance(
         anyhow::bail!("File {} exists; abort.", cred_path.display());
     }
     let instance: CloudInstance = client
-        .post("instances/", serde_json::to_value(instance)?)
+        .post(format!("orgs/{}/instances/", instance.org_slug), serde_json::to_value(instance)?)
         .await?;
     let instance = wait_instance_create(instance, client, false).await?;
     write_credentials(&cred_path, instance).await?;
@@ -161,19 +164,19 @@ pub async fn create(
     client.ensure_authenticated(false)?;
     // let version = Query::from_options(cmd.nightly, &cmd.version)?;
     let orgs: Vec<Org> = client.get("orgs/").await?;
-    let org_id = if let Some(name) = &cmd.cloud_org {
+    let org_slug = if let Some(name) = &cmd.cloud_org {
         if let Some(org) = orgs.iter().find(|org| org.name.eq(name)) {
-            org.id.clone()
+            org.slug.clone()
         } else {
             anyhow::bail!("Organization {} not found", name);
         }
     } else {
         // TODO: use default organization
-        orgs[0].id.clone()
+        orgs[0].slug.clone()
     };
     let instance = CloudInstanceCreate {
         name: cmd.name.clone(),
-        org: org_id
+        org_slug,
         // version: Some(format!("{}", version.display())),
         // default_database: Some(cmd.default_database.clone()),
         // default_user: Some(cmd.default_user.clone()),
@@ -247,7 +250,7 @@ pub async fn link(
             }
         }
     };
-    let instance = if let Some(instance) = find_cloud_instance_by_name(&cloud_name, &client).await?
+    let instance = if let Some(instance) = find_cloud_instance_by_name(&cmd.org.ok_or(anyhow::anyhow!("foo"))?, &cloud_name, &client).await?
     {
         wait_instance_create(instance, &client, cmd.quiet).await?
     } else {
@@ -316,11 +319,23 @@ pub async fn link(
     Ok(())
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct InstanceName {
+    pub instance_name: String,
+    pub org_slug: String,
+}
+
+async fn lookup_instance_name(instance_id: &str, client: &CloudClient) -> anyhow::Result<Option<InstanceName>> {
+    let instance_name: InstanceName = client.get(format!("instances/{}", instance_id)).await?;
+    Ok(Some(instance_name))
+}
+
 async fn destroy(instance_id: &str, options: &CloudOptions) -> anyhow::Result<()> {
     log::info!("Destroying EdgeDB Cloud instance: {}", instance_id);
     let client = CloudClient::new(options)?;
     client.ensure_authenticated(false)?;
-    let _: CloudInstance = client.delete(format!("instances/{}", instance_id)).await?;
+    let instance_name: InstanceName = lookup_instance_name(instance_id, &client).await?.ok_or(anyhow::anyhow!("could not get instance name"))?;
+    let _: CloudInstance = client.delete(format!("orgs/{}/instances/{}", instance_name.org_slug, instance_name.instance_name)).await?;
     Ok(())
 }
 
@@ -431,7 +446,7 @@ pub async fn ask_link_existing_cloud_instance(client: &CloudClient) -> anyhow::R
     }
 }
 
-pub async fn link_existing_cloud_instance(client: &CloudClient, name: &str) -> anyhow::Result<()> {
+pub async fn link_existing_cloud_instance(client: &CloudClient, org: &str, name: &str) -> anyhow::Result<()> {
     let cred_path = credentials::path(&name)?;
     if cred_path.exists() {
         anyhow::bail!(
@@ -439,7 +454,7 @@ pub async fn link_existing_cloud_instance(client: &CloudClient, name: &str) -> a
             name,
         );
     }
-    if let Some(inst) = find_cloud_instance_by_name(name, client).await? {
+    if let Some(inst) = find_cloud_instance_by_name(org, name, client).await? {
         let inst = wait_instance_create(inst, client, false).await?;
         write_credentials(&cred_path, inst).await?;
         Ok(())

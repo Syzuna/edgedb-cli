@@ -503,10 +503,10 @@ pub fn init_existing(options: &Init, project_dir: &Path, cloud_options: &crate::
         };
         let org = task::block_on(ask_cloud_org(&client, options))?;
         if let Some(_instance) = task::block_on(crate::cloud::ops::find_cloud_instance_by_name(
-            &name, &client,
+            &org.slug, &name, &client,
         ))? {
             ask_link_cloud_instance(options, &name)?;
-            task::block_on(crate::cloud::ops::link_existing_cloud_instance(&client, &name))?;
+            task::block_on(crate::cloud::ops::link_existing_cloud_instance(&client, &org.slug, &name))?;
             let inst = Handle::probe(&name)?;
             inst.check_version(&ver_query);
             return do_link(&inst, options, project_dir, &stash_dir);
@@ -524,7 +524,7 @@ pub fn init_existing(options: &Init, project_dir: &Path, cloud_options: &crate::
             write_schema_default(&schema_dir)?;
         }
 
-        do_cloud_init(name, org, &stash_dir, &project_dir, options, &client)  // , version)
+        do_cloud_init(name, org.id, &stash_dir, &project_dir, options, &client)  // , version)
     } else {
         let pkg = repository::get_server_package(&ver_query)?
             .with_context(||
@@ -644,7 +644,7 @@ fn do_cloud_init(
 ) -> anyhow::Result<ProjectInfo> {
     let instance = crate::cloud::ops::CloudInstanceCreate {
         name: name.clone(),
-        org,
+        org_slug: org,
         // version: Some(version),
         // default_database: None,
         // default_user: None,
@@ -731,10 +731,10 @@ pub fn init_new(options: &Init, project_dir: &Path, opts: &crate::options::Optio
         };
         let org = task::block_on(ask_cloud_org(&client, options))?;
         if let Some(_instance) = task::block_on(crate::cloud::ops::find_cloud_instance_by_name(
-            &name, &client,
+            &org.slug, &name, &client,
         ))? {
             ask_link_cloud_instance(options, &name)?;
-            task::block_on(crate::cloud::ops::link_existing_cloud_instance(&client, &name))?;
+            task::block_on(crate::cloud::ops::link_existing_cloud_instance(&client, &org.slug, &name))?;
             let inst = Handle::probe(&name)?;
             write_config(&config_path,
                          &Query::from_version(&inst.get_version()?.specific())?)?;
@@ -759,7 +759,7 @@ pub fn init_new(options: &Init, project_dir: &Path, opts: &crate::options::Optio
             write_schema_default(&schema_dir)?;
         }
 
-        do_cloud_init(name, org, &stash_dir, &project_dir, options, &client)  // , version)
+        do_cloud_init(name, org.id, &stash_dir, &project_dir, options, &client)  // , version)
     } else {
         let pkg = ask_version(options)?;
         let start_conf = ask_start_conf(options)?;
@@ -1152,14 +1152,14 @@ fn ask_cloud_version(options: &Init) -> anyhow::Result<String> {
     }
 }
 
-async fn ask_cloud_org(client: &CloudClient, options: &Init) -> anyhow::Result<String> {
+async fn ask_cloud_org(client: &CloudClient, options: &Init) -> anyhow::Result<crate::cloud::ops::Org> {
     let orgs: Vec<crate::cloud::ops::Org> = client.get("orgs/").await?;
     if options.non_interactive {
-        Ok(orgs.into_iter().next().unwrap().id)
+        Ok(orgs.into_iter().next().unwrap())
     } else {
         let mut q = question::Numeric::new("Choose an organization:");
         for org in orgs {
-            q.option(org.name, org.id);
+            q.option(org.name.clone(), org);
         }
         Ok(q.ask()?)
     }

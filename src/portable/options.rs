@@ -208,6 +208,10 @@ pub struct Link {
     /// Link to an EdgeDB Cloud instance rather than a regular remote instance
     #[clap(long, hide=true)]
     pub cloud: bool,
+
+    // Indicate the org when the --cloud flag is set 
+    #[clap(long, hide=true)]
+    pub org: Option<String>,
 }
 
 #[derive(EdbClap, Clone, Debug)]
