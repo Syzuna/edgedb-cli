@@ -250,7 +250,7 @@ pub async fn link(
             }
         }
     };
-    let instance = if let Some(instance) = find_cloud_instance_by_name(&cmd.org.ok_or(anyhow::anyhow!("foo"))?, &cloud_name, &client).await?
+    let instance = if let Some(instance) = find_cloud_instance_by_name(cmd.org.as_ref().ok_or(anyhow::anyhow!("foo"))?, &cloud_name, &client).await?
     {
         wait_instance_create(instance, &client, cmd.quiet).await?
     } else {
