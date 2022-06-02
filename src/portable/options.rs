@@ -5,7 +5,7 @@ use clap::{ValueHint};
 use serde::{Serialize, Deserialize};
 use edgedb_cli_derive::{EdbClap, IntoArgs};
 
-use crate::portable::local::is_valid_name;
+use crate::portable::local::{is_valid_instance_name, is_valid_org_name};
 use crate::portable::ver;
 use crate::process::{self, IntoArg};
 
@@ -123,7 +123,7 @@ pub enum StartConf {
 #[derive(EdbClap, IntoArgs, Debug, Clone)]
 pub struct Create {
     /// Name of the created instance
-    #[clap(validator(instance_name_opt))]
+    #[clap(validator(instance_or_cloud_name_opt))]
     #[clap(value_hint=ValueHint::Other)]  // TODO complete instance name
     pub name: String,
     #[clap(long)]
@@ -146,20 +146,12 @@ pub struct Create {
     /// credentials file)
     #[clap(long, default_value="edgedb")]
     pub default_user: String,
-
-    /// Create an EdgeDB Cloud instance rather than a local instance
-    #[clap(long, hide=true)]
-    pub cloud: bool,
-
-    /// Create the EdgeDB Cloud instance under the given organization
-    #[clap(long, hide=true)]
-    pub cloud_org: Option<String>,
 }
 
 #[derive(EdbClap, IntoArgs, Debug, Clone)]
 pub struct Destroy {
     /// Name of the instance to destroy
-    #[clap(validator(instance_name_opt))]
+    #[clap(validator(instance_or_cloud_name_opt))]
     #[clap(value_hint=ValueHint::Other)]  // TODO complete instance name
     pub name: String,
     /// Verbose output
@@ -204,14 +196,6 @@ pub struct Link {
     /// Overwrite existing credential file if any.
     #[clap(long)]
     pub overwrite: bool,
-
-    /// Link to an EdgeDB Cloud instance rather than a regular remote instance
-    #[clap(long, hide=true)]
-    pub cloud: bool,
-
-    // Indicate the org when the --cloud flag is set 
-    #[clap(long, hide=true)]
-    pub org: Option<String>,
 }
 
 #[derive(EdbClap, Clone, Debug)]
@@ -470,10 +454,35 @@ impl fmt::Display for StartConf {
 }
 
 pub fn instance_name_opt(name: &str) -> Result<(), String> {
-    if is_valid_name(&name) {
+    if is_valid_instance_name(&name) {
         return Ok(())
     }
     return Err("instance name must be a valid identifier, \
-                (regex: ^[a-zA-Z_][a-zA-Z_0-9]*$)".into())
+        regex: ^[a-zA-Z_][a-zA-Z_0-9]*$".into())
+}
+
+pub fn instance_or_cloud_name_opt(name: &str) -> Result<(), String> {
+    if is_valid_instance_name(&name) {
+        return Ok(())
+    }
+    if !name.contains("/") {
+        // todo: should this also mention the format for cloud instance names?
+        return Err("instance name must be a valid identifier, \
+            regex: ^[a-zA-Z_][a-zA-Z_0-9]*$".into())
+    }
+    match crate::cloud::ops::split_cloud_instance_name(&name) {
+        Ok((org_slug, inst_name)) => {
+            if !is_valid_instance_name(&inst_name) {
+                return Err(format!("instance name \"{}\" must be a valid identifier, \
+                    regex: ^[a-zA-Z_][a-zA-Z_0-9]*$", inst_name).into())
+            }
+            if !is_valid_org_name(&org_slug) {
+                return Err(format!("org name \"{}\" must be a valid identifier, \
+                    regex: ^[a-zA-Z0-9][a-zA-Z0-9-]{{0,38}}$", org_slug).into())
+            }
+            return Ok(())
+        },
+        Err(e) => Err(format!("invalid cloud instance name: {}", e)),
+    }
 }
 

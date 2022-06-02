@@ -5,6 +5,7 @@ use async_std::task;
 use fn_error_context::context;
 
 use crate::commands::ExitCode;
+use crate::cloud;
 use crate::credentials;
 use crate::hint::HintExt;
 use crate::platform;
@@ -23,7 +24,11 @@ use crate::process;
 use edgedb_client::credentials::Credentials;
 
 
-pub fn create(options: &Create) -> anyhow::Result<()> {
+pub fn create(cmd: &Create, opts: &crate::options::Options) -> anyhow::Result<()> {
+    if cmd.name.contains("/") {
+        return task::block_on(cloud::ops::create(cmd, opts));
+    };
+
     if optional_docker_check()? {
         print::error(
             "`edgedb instance create` in a Docker container is not supported.",
@@ -31,35 +36,35 @@ pub fn create(options: &Create) -> anyhow::Result<()> {
         return Err(ExitCode::new(exit_codes::DOCKER_CONTAINER))?;
     }
 
-    let paths = Paths::get(&options.name)?;
+    let paths = Paths::get(&cmd.name)?;
     paths.check_exists()
-        .with_context(|| format!("instance {:?} detected", options.name))
+        .with_context(|| format!("instance {:?} detected", cmd.name))
         .with_hint(|| format!("Use `edgedb destroy {}` \
                               to remove remains of unused instance",
-                              options.name))?;
+                              cmd.name))?;
 
-    let port = options.port.map(Ok)
-        .unwrap_or_else(|| allocate_port(&options.name))?;
+    let port = cmd.port.map(Ok)
+        .unwrap_or_else(|| allocate_port(&cmd.name))?;
 
     let info = if cfg!(windows) {
-        windows::create_instance(options, port, &paths)?;
+        windows::create_instance(cmd, port, &paths)?;
         InstanceInfo {
-            name: options.name.clone(),
+            name: cmd.name.clone(),
             installation: None,
             port,
-            start_conf: options.start_conf,
+            start_conf: cmd.start_conf,
         }
     } else {
-        let query = Query::from_options(options.nightly, &options.version)?;
+        let query = Query::from_options(cmd.nightly, &cmd.version)?;
         let inst = install::version(&query).context("error installing EdgeDB")?;
         let info = InstanceInfo {
-            name: options.name.clone(),
+            name: cmd.name.clone(),
             installation: Some(inst),
             port,
-            start_conf: options.start_conf,
+            start_conf: cmd.start_conf,
         };
         bootstrap(&paths, &info,
-                  &options.default_database, &options.default_user)?;
+                  &cmd.default_database, &cmd.default_user)?;
         info
     };
 
@@ -68,24 +73,24 @@ pub fn create(options: &Create) -> anyhow::Result<()> {
         return Ok(())
     }
 
-    match (create_service(&info), options.start_conf) {
+    match (create_service(&info), cmd.start_conf) {
         (Ok(()), StartConf::Manual) => {
-            echo!("Instance", options.name.emphasize(), "is ready.");
+            echo!("Instance", cmd.name.emphasize(), "is ready.");
             eprintln!("You can start it manually via: \n  \
                 edgedb instance start [--foreground] {}",
-                options.name);
+                cmd.name);
         }
         (Ok(()), StartConf::Auto) => {
-            echo!("Instance", options.name.emphasize(), "is up and running.");
+            echo!("Instance", cmd.name.emphasize(), "is up and running.");
             echo!("To connect to the instance run:");
-            echo!("  edgedb -I", options.name);
+            echo!("  edgedb -I", cmd.name);
         }
         (Err(e), _) => {
             eprintln!("Bootstrapping complete, \
                 but there was an error creating the service: {:#}", e);
             eprintln!("You can start it manually via: \n  \
                 edgedb instance start {}",
-                options.name);
+                cmd.name);
             return Err(ExitCode::new(exit_codes::CANNOT_CREATE_SERVICE))?;
         }
     }
