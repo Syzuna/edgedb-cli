@@ -466,9 +466,8 @@ pub fn instance_or_cloud_name_opt(name: &str) -> Result<(), String> {
         return Ok(())
     }
     if !name.contains("/") {
-        // todo: should this also mention the format for cloud instance names?
         return Err("instance name must be a valid identifier, \
-            regex: ^[a-zA-Z_][a-zA-Z_0-9]*$".into())
+            regex: ^[a-zA-Z_][a-zA-Z_0-9]*$ or a cloud instance name ORG/INST.".into())
     }
     match crate::cloud::ops::split_cloud_instance_name(&name) {
         Ok((org_slug, inst_name)) => {
