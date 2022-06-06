@@ -159,7 +159,7 @@ pub async fn create_cloud_instance(
 pub fn split_cloud_instance_name(name: &str) -> anyhow::Result<(String, String)> {
     let mut splitter = name.splitn(2, '/');
     match splitter.next() {
-        None => anyhow::bail!("unreachable"),
+        None => unreachable!(),
         Some("") => anyhow::bail!("empty instance name"),
         Some(org) => match splitter.next() {
             None => anyhow::bail!("cloud instance must be in the form ORG/INST"),
